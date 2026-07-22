@@ -85,10 +85,6 @@ private struct CountdownDisplay: View {
             )
             .padding(.horizontal, 14)
             .padding(.vertical, 2)
-            .background {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(.red.opacity(urgent ? (isPulsing ? 0.18 : 0.06) : 0))
-            }
             .animation(
                 urgent
                     ? .easeInOut(duration: 0.28).repeatForever(autoreverses: true)
