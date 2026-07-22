@@ -29,9 +29,22 @@ struct AnyNotifyApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        MenuBarExtra("AnyNotify", systemImage: "bell.and.waves.left.and.right.fill") {
+        MenuBarExtra {
             MenuBarView()
                 .environmentObject(appDelegate.store)
+        } label: {
+            MenuBarStatusIcon(store: appDelegate.store)
         }
+    }
+}
+
+private struct MenuBarStatusIcon: View {
+    @ObservedObject var store: MonitorStore
+
+    var body: some View {
+        Image(systemName: store.isMonitoring
+              ? "bell.and.waves.left.and.right.fill"
+              : "bell.fill")
+            .accessibilityLabel(store.isMonitoring ? "AnyNotify，正在监控任务状态" : "AnyNotify，已暂停监控任务状态")
     }
 }
