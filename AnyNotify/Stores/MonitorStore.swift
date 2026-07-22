@@ -7,12 +7,17 @@ final class MonitorStore: ObservableObject {
     static let reminderDurationRange = 1...60
     static let defaultReminderDurationMinutes = 3
 
-    @Published var isMonitoring = true
+    @Published private(set) var isMonitoring: Bool
     @Published private(set) var notificationStatus: UNAuthorizationStatus = .notDetermined
     @Published private(set) var claudeAvailable = false
     @Published private(set) var codexAvailable = false
     @Published private(set) var claudeHooksInstalled = false
     @Published private(set) var completionReminder: CompletionReminder?
+    @Published var showNotificationDetails: Bool {
+        didSet {
+            preferences.set(showNotificationDetails, forKey: Self.showNotificationDetailsKey)
+        }
+    }
     @Published var reminderDurationMinutes: Int {
         didSet {
             let normalized = Self.normalizedReminderDuration(reminderDurationMinutes)
@@ -31,18 +36,29 @@ final class MonitorStore: ObservableObject {
     @Published var lastError: String?
 
     private let engine = LogMonitoringEngine()
-    private let notifications = DesktopNotificationService.shared
+    private let notifications: any NotificationSending
     private let reminderSounds = ReminderSoundService.shared
-    private let hookManager = ClaudeHookManager()
+    private let hookManager: ClaudeHookManager
     private let preferences: UserDefaults
     private var monitorTask: Task<Void, Never>?
     private var reminderSoundTask: Task<Void, Never>?
     private var recentDedupeKeys: [String: Date] = [:]
 
     private static let reminderDurationKey = "completionReminderDurationMinutes"
+    private static let monitoringEnabledKey = "monitoringEnabled"
+    private static let showNotificationDetailsKey = "showNotificationDetails"
 
-    init(preferences: UserDefaults = .standard) {
+    init(
+        preferences: UserDefaults = .standard,
+        notifications: any NotificationSending = DesktopNotificationService.shared,
+        hookManager: ClaudeHookManager = ClaudeHookManager()
+    ) {
         self.preferences = preferences
+        self.notifications = notifications
+        self.hookManager = hookManager
+        isMonitoring = preferences.object(forKey: Self.monitoringEnabledKey) as? Bool ?? true
+        showNotificationDetails = preferences.object(forKey: Self.showNotificationDetailsKey) as? Bool ?? false
+        claudeHooksInstalled = hookManager.isInstalled()
         let savedDuration = preferences.integer(forKey: Self.reminderDurationKey)
         reminderDurationMinutes = Self.normalizedReminderDuration(
             savedDuration == 0 ? Self.defaultReminderDurationMinutes : savedDuration
@@ -55,8 +71,8 @@ final class MonitorStore: ObservableObject {
     }
 
     func start() {
-        guard monitorTask == nil, isMonitoring else { return }
         claudeHooksInstalled = hookManager.isInstalled()
+        guard monitorTask == nil, isMonitoring else { return }
         monitorTask = Task { @MainActor [weak self] in
             await self?.refreshNotificationStatus()
             while !Task.isCancelled {
@@ -89,6 +105,7 @@ final class MonitorStore: ObservableObject {
 
     func setMonitoring(_ enabled: Bool) {
         isMonitoring = enabled
+        preferences.set(enabled, forKey: Self.monitoringEnabledKey)
         if enabled {
             start()
         } else {
@@ -139,6 +156,7 @@ final class MonitorStore: ObservableObject {
     }
 
     func handle(url: URL) {
+        guard isMonitoring else { return }
         guard url.scheme == "anynotify", url.host == "hook" else { return }
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         let values = Dictionary(uniqueKeysWithValues: (components?.queryItems ?? []).map { ($0.name, $0.value ?? "") })
@@ -148,7 +166,11 @@ final class MonitorStore: ObservableObject {
         let summary = status == .waiting
             ? "\(source.displayName) 正在等待你的确认或输入"
             : "\(source.displayName) 任务状态已更新"
-        Task { await accept(TaskEvent(source: source, status: status, summary: summary)) }
+        let event = TaskEvent(source: source, status: status, summary: summary)
+        Task { @MainActor [weak self] in
+            guard let self, self.isMonitoring else { return }
+            await self.accept(event)
+        }
     }
 
     private func refreshNotificationStatus() async {
@@ -201,9 +223,15 @@ final class MonitorStore: ObservableObject {
                 duration: reminderDuration
             )
             completionReminder = reminder
+            reminderSounds.playCompletion()
             scheduleReminderSounds(for: reminder)
         }
-        await notifications.send(event)
+        do {
+            try await notifications.send(event, includeDetails: showNotificationDetails)
+            lastError = nil
+        } catch {
+            lastError = "发送通知失败：\(error.localizedDescription)"
+        }
     }
 
     private func scheduleReminderSounds(for reminder: CompletionReminder) {

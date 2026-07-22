@@ -87,7 +87,13 @@ struct TaskEvent: Identifiable, Sendable {
     }
 
     nonisolated var notificationBody: String {
-        let parts = [projectName, summary].filter { !$0.isEmpty }
+        notificationBody(includeDetails: false)
+    }
+
+    nonisolated func notificationBody(includeDetails: Bool) -> String {
+        guard includeDetails else { return "任务状态已更新" }
+        let parts = [projectName.redactedForNotification, summary.redactedForNotification]
+            .filter { !$0.isEmpty }
         return parts.isEmpty ? "任务状态已更新" : parts.joined(separator: " — ")
     }
 
@@ -120,5 +126,26 @@ extension String {
             .joined(separator: " ")
             .prefix(200)
             .description
+    }
+
+    nonisolated var redactedForNotification: String {
+        var redacted = self
+        let patterns = [
+            #"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+"#,
+            #"(?i)\b(?:api[_-]?key|access[_-]?token|auth(?:orization)?|password|passwd|secret|token)\s*[:=]\s*['\"]?[^\s,'\"]+"#,
+            #"\bsk-[A-Za-z0-9_-]{12,}"#,
+            #"\b(?:ghp|gho|ghs|ghu|ghr|github_pat)_[A-Za-z0-9_]{12,}"#,
+            #"\bAKIA[0-9A-Z]{16}\b"#,
+            #"\b(?:xoxb|xoxp|xoxa|xoxr)-[A-Za-z0-9-]{10,}"#,
+            #"-----BEGIN [^-]+ PRIVATE KEY-----"#
+        ]
+        for pattern in patterns {
+            redacted = redacted.replacingOccurrences(
+                of: pattern,
+                with: "[已隐藏]",
+                options: .regularExpression
+            )
+        }
+        return redacted.firstUsefulLine.shortenedForNotification
     }
 }

@@ -11,6 +11,10 @@ final class ReminderSoundService {
 
     private init() {}
 
+    func playCompletion() {
+        NSSound.beep()
+    }
+
     func playUrgentWarning() {
         urgentTask?.cancel()
         urgentTask = Task { @MainActor [weak self] in

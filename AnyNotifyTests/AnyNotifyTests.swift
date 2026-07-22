@@ -1,9 +1,28 @@
 import Foundation
 import Combine
 import Testing
+import UserNotifications
 @testable import AnyNotify
 
 struct AnyNotifyTests {
+    private final class TestNotificationService: NotificationSending {
+        var error: Error?
+        var sent: [(TaskEvent, Bool)] = []
+
+        func requestAuthorization() async -> UNAuthorizationStatus {
+            .authorized
+        }
+
+        func send(_ event: TaskEvent, includeDetails: Bool) async throws {
+            if let error { throw error }
+            sent.append((event, includeDetails))
+        }
+    }
+
+    private struct TestNotificationError: LocalizedError {
+        var errorDescription: String? { "测试发送失败" }
+    }
+
     @Test func claudeCompletionIsParsed() throws {
         var parser = ClaudeLogParser()
         _ = parser.parse(line: try jsonData([
@@ -154,6 +173,150 @@ struct AnyNotifyTests {
         store.dismissCompletionReminder()
 
         #expect(store.completionReminder == nil)
+    }
+
+    @MainActor
+    @Test func monitoringPreferenceIsPersisted() {
+        let suiteName = "AnyNotifyTests.\(UUID().uuidString)"
+        let preferences = UserDefaults(suiteName: suiteName)!
+        defer { preferences.removePersistentDomain(forName: suiteName) }
+
+        let store = MonitorStore(preferences: preferences)
+        #expect(store.isMonitoring)
+        store.setMonitoring(false)
+
+        #expect(!MonitorStore(preferences: preferences).isMonitoring)
+        store.setMonitoring(true)
+        #expect(MonitorStore(preferences: preferences).isMonitoring)
+    }
+
+    @MainActor
+    @Test func pausedStoreStillReportsClaudeHookInstallation() throws {
+        let fileManager = FileManager.default
+        let temporaryDirectory = fileManager.temporaryDirectory
+            .appending(path: "AnyNotifyTests.\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? fileManager.removeItem(at: temporaryDirectory) }
+        try fileManager.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+
+        let settingsURL = temporaryDirectory.appending(path: "settings.json")
+        let manager = ClaudeHookManager(settingsURL: settingsURL)
+        try manager.install()
+
+        let suiteName = "AnyNotifyTests.\(UUID().uuidString)"
+        let preferences = UserDefaults(suiteName: suiteName)!
+        defer { preferences.removePersistentDomain(forName: suiteName) }
+        preferences.set(false, forKey: "monitoringEnabled")
+
+        let store = MonitorStore(preferences: preferences, hookManager: manager)
+        #expect(!store.isMonitoring)
+        #expect(store.claudeHooksInstalled)
+    }
+
+    @MainActor
+    @Test func pausedMonitoringIgnoresHookEvents() async throws {
+        let suiteName = "AnyNotifyTests.\(UUID().uuidString)"
+        let preferences = UserDefaults(suiteName: suiteName)!
+        defer { preferences.removePersistentDomain(forName: suiteName) }
+        let service = TestNotificationService()
+        let store = MonitorStore(preferences: preferences, notifications: service)
+        store.setMonitoring(false)
+
+        store.handle(url: try #require(URL(string: "anynotify://hook?source=claude&status=completed")))
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(service.sent.isEmpty)
+        #expect(store.completionReminder == nil)
+    }
+
+    @MainActor
+    @Test func notificationFailureIsShownToUser() async throws {
+        let suiteName = "AnyNotifyTests.\(UUID().uuidString)"
+        let preferences = UserDefaults(suiteName: suiteName)!
+        defer { preferences.removePersistentDomain(forName: suiteName) }
+        let service = TestNotificationService()
+        service.error = TestNotificationError()
+        let store = MonitorStore(preferences: preferences, notifications: service)
+
+        store.handle(url: try #require(URL(string: "anynotify://hook?source=claude&status=completed")))
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(store.lastError?.contains("发送通知失败") == true)
+    }
+
+    @MainActor
+    @Test func notificationDetailsAreHiddenByDefaultAndOptInIsPersisted() async throws {
+        let suiteName = "AnyNotifyTests.\(UUID().uuidString)"
+        let preferences = UserDefaults(suiteName: suiteName)!
+        defer { preferences.removePersistentDomain(forName: suiteName) }
+        let service = TestNotificationService()
+        let store = MonitorStore(preferences: preferences, notifications: service)
+
+        store.handle(url: try #require(URL(string: "anynotify://hook?source=claude&status=completed")))
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(service.sent.last?.1 == false)
+        #expect(!MonitorStore(preferences: preferences).showNotificationDetails)
+
+        store.showNotificationDetails = true
+        #expect(MonitorStore(preferences: preferences).showNotificationDetails)
+    }
+
+    @Test func notificationSummaryRedactsSecrets() {
+        let event = TaskEvent(
+            source: .claude,
+            status: .completed,
+            workingDirectory: "/tmp/project",
+            summary: "token=super-secret sk-1234567890abcdef password=hunter2"
+        )
+
+        #expect(event.notificationBody == "任务状态已更新")
+        let body = event.notificationBody(includeDetails: true)
+        #expect(body.contains("[已隐藏]"))
+        #expect(!body.contains("super-secret"))
+        #expect(!body.contains("1234567890abcdef"))
+        #expect(!body.contains("hunter2"))
+    }
+
+    @Test func claudeHookInstallBacksUpValidConfigurationAndLocks() throws {
+        let fileManager = FileManager.default
+        let temporaryDirectory = fileManager.temporaryDirectory
+            .appending(path: "AnyNotifyTests.\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? fileManager.removeItem(at: temporaryDirectory) }
+        try fileManager.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+
+        let settingsURL = temporaryDirectory.appending(path: "settings.json")
+        let original = Data("{\"custom\":true}\n".utf8)
+        try original.write(to: settingsURL)
+        let manager = ClaudeHookManager(settingsURL: settingsURL)
+
+        try manager.install()
+
+        #expect(try Data(contentsOf: settingsURL.appendingPathExtension("anynotify.backup")) == original)
+        #expect(fileManager.fileExists(atPath: settingsURL.appendingPathExtension("anynotify.lock").path))
+        #expect(manager.isInstalled())
+    }
+
+    @Test func claudeHookInstallRefusesToOverwriteInvalidConfiguration() throws {
+        let fileManager = FileManager.default
+        let temporaryDirectory = fileManager.temporaryDirectory
+            .appending(path: "AnyNotifyTests.\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? fileManager.removeItem(at: temporaryDirectory) }
+        try fileManager.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+
+        let settingsURL = temporaryDirectory.appending(path: "settings.json")
+        let invalid = Data("{not-json".utf8)
+        try invalid.write(to: settingsURL)
+        let manager = ClaudeHookManager(settingsURL: settingsURL)
+
+        var didThrow = false
+        do {
+            try manager.install()
+        } catch {
+            didThrow = true
+        }
+
+        #expect(didThrow)
+        #expect(try Data(contentsOf: settingsURL) == invalid)
+        #expect(!fileManager.fileExists(atPath: settingsURL.appendingPathExtension("anynotify.backup").path))
     }
 
     @MainActor

@@ -43,6 +43,7 @@ struct MenuBarView: View {
         Button(store.claudeHooksInstalled ? "卸载 Claude Hooks" : "安装 Claude Hooks") {
             store.toggleClaudeHooks()
         }
+        Toggle("通知中显示任务摘要", isOn: $store.showNotificationDetails)
         Button("发送测试提醒") {
             store.sendTestNotification()
         }
