@@ -2,6 +2,7 @@ import Foundation
 
 actor LogMonitoringEngine {
     static let defaultMaximumTrackedFiles = 64
+    static let defaultDiscoveryInterval: TimeInterval = 10
 
     struct Availability: Sendable {
         let claude: Bool
@@ -27,31 +28,51 @@ actor LogMonitoringEngine {
     private let fileManager = FileManager.default
     private let homeDirectory: URL
     private let maximumTrackedFiles: Int
+    private let discoveryInterval: TimeInterval
     private var cursors: [URL: FileCursor] = [:]
     private var claudeParsers: [URL: ClaudeLogParser] = [:]
     private var codexParsers: [URL: CodexLogParser] = [:]
     private var fileAccessOrder: [URL] = []
+    private var recentClaudeFiles: [URL] = []
+    private var recentCodexFiles: [URL] = []
+    private var availability = Availability(claude: false, codex: false)
+    private var lastDiscoveryDate: Date?
     private var initialized = false
 
     init(
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
-        maximumTrackedFiles: Int = LogMonitoringEngine.defaultMaximumTrackedFiles
+        maximumTrackedFiles: Int = LogMonitoringEngine.defaultMaximumTrackedFiles,
+        discoveryInterval: TimeInterval = LogMonitoringEngine.defaultDiscoveryInterval
     ) {
         precondition(maximumTrackedFiles > 0)
+        precondition(discoveryInterval >= 0)
         self.homeDirectory = homeDirectory
         self.maximumTrackedFiles = maximumTrackedFiles
+        self.discoveryInterval = discoveryInterval
     }
 
     func poll() -> PollResult {
+        poll(at: Date())
+    }
+
+    func poll(at now: Date) -> PollResult {
         let claudeRoot = homeDirectory.appending(path: ".claude/projects", directoryHint: .isDirectory)
         let codexRoot = homeDirectory.appending(path: ".codex/sessions", directoryHint: .isDirectory)
         let tuiLog = homeDirectory.appending(path: ".codex/log/codex-tui.log")
 
-        let claudeFiles = recentJSONLFiles(in: claudeRoot, limit: 8)
-        let codexFiles = recentJSONLFiles(in: codexRoot, limit: 8)
+        if shouldDiscoverFiles(at: now) {
+            recentClaudeFiles = recentJSONLFiles(in: claudeRoot, limit: 8)
+            recentCodexFiles = recentJSONLFiles(in: codexRoot, limit: 8)
+            availability = Availability(
+                claude: fileManager.fileExists(atPath: claudeRoot.path),
+                codex: fileManager.fileExists(atPath: codexRoot.path)
+            )
+            lastDiscoveryDate = now
+        }
+
         var events: [TaskEvent] = []
 
-        for file in claudeFiles {
+        for file in recentClaudeFiles {
             markFileAccessed(file)
             let lines = readNewLines(from: file, seedAtEnd: !initialized)
             var parser = claudeParsers[file] ?? ClaudeLogParser()
@@ -59,7 +80,7 @@ actor LogMonitoringEngine {
             claudeParsers[file] = parser
         }
 
-        for file in codexFiles {
+        for file in recentCodexFiles {
             markFileAccessed(file)
             let lines = readNewLines(from: file, seedAtEnd: !initialized)
             var parser = codexParsers[file] ?? CodexLogParser()
@@ -78,11 +99,13 @@ actor LogMonitoringEngine {
         initialized = true
         return PollResult(
             events: events,
-            availability: Availability(
-                claude: fileManager.fileExists(atPath: claudeRoot.path),
-                codex: fileManager.fileExists(atPath: codexRoot.path)
-            )
+            availability: availability
         )
+    }
+
+    private func shouldDiscoverFiles(at now: Date) -> Bool {
+        guard let lastDiscoveryDate else { return true }
+        return now.timeIntervalSince(lastDiscoveryDate) >= discoveryInterval
     }
 
     private func recentJSONLFiles(in root: URL, limit: Int) -> [URL] {

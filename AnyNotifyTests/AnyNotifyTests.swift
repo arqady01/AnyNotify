@@ -194,6 +194,33 @@ struct AnyNotifyTests {
         #expect(counts.codexParsers == 0)
     }
 
+    @Test func logFileDiscoveryIsThrottled() async throws {
+        let fileManager = FileManager.default
+        let temporaryHome = fileManager.temporaryDirectory
+            .appending(path: "AnyNotifyTests.\(UUID().uuidString)", directoryHint: .isDirectory)
+        let claudeRoot = temporaryHome
+            .appending(path: ".claude/projects", directoryHint: .isDirectory)
+        defer { try? fileManager.removeItem(at: temporaryHome) }
+
+        try fileManager.createDirectory(at: claudeRoot, withIntermediateDirectories: true)
+        try Data("{\"type\":\"noop\"}\n".utf8)
+            .write(to: claudeRoot.appending(path: "first.jsonl"))
+
+        let start = Date(timeIntervalSince1970: 1_000)
+        let engine = LogMonitoringEngine(homeDirectory: temporaryHome, discoveryInterval: 10)
+        _ = await engine.poll(at: start)
+
+        try Data("{\"type\":\"noop\"}\n".utf8)
+            .write(to: claudeRoot.appending(path: "second.jsonl"))
+        _ = await engine.poll(at: start.addingTimeInterval(9))
+        var counts = await engine.cachedStateCounts()
+        #expect(counts.cursors == 1)
+
+        _ = await engine.poll(at: start.addingTimeInterval(10))
+        counts = await engine.cachedStateCounts()
+        #expect(counts.cursors == 2)
+    }
+
     private func envelope(type: String, payload: [String: Any]) throws -> Data {
         try jsonData([
             "type": type,
