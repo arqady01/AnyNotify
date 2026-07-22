@@ -47,11 +47,6 @@ struct MenuBarView: View {
             store.sendTestNotification()
         }
 
-        if let event = store.events.first {
-            Divider()
-            Label(shortTitle(event), systemImage: event.status.systemImage)
-        }
-
         Divider()
         if let lastError = store.lastError {
             Text(lastError)
@@ -59,10 +54,5 @@ struct MenuBarView: View {
         Button("退出") {
             NSApplication.shared.terminate(nil)
         }
-    }
-
-    private func shortTitle(_ event: TaskEvent) -> String {
-        let title = "\(event.source.displayName) \(event.status.displayName)"
-        return title.count <= 30 ? title : String(title.prefix(27)) + "…"
     }
 }

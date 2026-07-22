@@ -8,7 +8,6 @@ final class MonitorStore: ObservableObject {
     static let defaultReminderDurationMinutes = 3
 
     @Published var isMonitoring = true
-    @Published private(set) var events: [TaskEvent] = []
     @Published private(set) var notificationStatus: UNAuthorizationStatus = .notDetermined
     @Published private(set) var claudeAvailable = false
     @Published private(set) var codexAvailable = false
@@ -195,8 +194,6 @@ final class MonitorStore: ObservableObject {
         recentDedupeKeys[event.dedupeKey] = now
         recentDedupeKeys[coarseKey] = now
 
-        events.insert(event, at: 0)
-        if events.count > 100 { events.removeLast(events.count - 100) }
         if event.status == .completed {
             let reminder = CompletionReminder(
                 source: event.source,
