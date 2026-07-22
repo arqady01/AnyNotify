@@ -57,7 +57,7 @@ struct TaskEvent: Identifiable, Sendable {
     let summary: String
     let timestamp: Date
 
-    init(
+    nonisolated init(
         id: UUID = UUID(),
         source: TaskSource,
         status: TaskStatus,
@@ -77,44 +77,44 @@ struct TaskEvent: Identifiable, Sendable {
         self.timestamp = timestamp
     }
 
-    var projectName: String {
+    nonisolated var projectName: String {
         guard let workingDirectory, !workingDirectory.isEmpty else { return "" }
         return URL(fileURLWithPath: workingDirectory).lastPathComponent
     }
 
-    var notificationTitle: String {
+    nonisolated var notificationTitle: String {
         "\(source.displayName) · \(status.displayName)"
     }
 
-    var notificationBody: String {
+    nonisolated var notificationBody: String {
         let parts = [projectName, summary].filter { !$0.isEmpty }
         return parts.isEmpty ? "任务状态已更新" : parts.joined(separator: " — ")
     }
 
-    var dedupeKey: String {
+    nonisolated var dedupeKey: String {
         let stableTurn = turnID ?? sessionID ?? projectName
         return "\(source.rawValue)|\(status.rawValue)|\(stableTurn)|\(summary.normalizedForDedupe)"
     }
 }
 
 extension String {
-    var trimmed: String {
+    nonisolated var trimmed: String {
         trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    var firstUsefulLine: String {
+    nonisolated var firstUsefulLine: String {
         split(whereSeparator: { $0.isNewline })
             .map { String($0).trimmed }
             .first(where: { !$0.isEmpty }) ?? ""
     }
 
-    var shortenedForNotification: String {
+    nonisolated var shortenedForNotification: String {
         let line = firstUsefulLine
         guard line.count > 160 else { return line }
         return String(line.prefix(157)) + "…"
     }
 
-    fileprivate var normalizedForDedupe: String {
+    nonisolated fileprivate var normalizedForDedupe: String {
         lowercased()
             .split(whereSeparator: { $0.isWhitespace })
             .joined(separator: " ")

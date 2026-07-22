@@ -5,7 +5,9 @@ struct ClaudeLogParser: Sendable {
     private(set) var workingDirectory: String?
     private var activeTurnID: String?
 
-    mutating func parse(line: Data) -> [TaskEvent] {
+    nonisolated init() {}
+
+    nonisolated mutating func parse(line: Data) -> [TaskEvent] {
         guard
             let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
             !isFilteredSession(object)
@@ -111,7 +113,9 @@ struct CodexLogParser: Sendable {
     private var pendingInputCalls: Set<String> = []
     private var isSubagent = false
 
-    mutating func parse(line: Data) -> [TaskEvent] {
+    nonisolated init() {}
+
+    nonisolated mutating func parse(line: Data) -> [TaskEvent] {
         guard
             let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
             let type = string(object["type"]),

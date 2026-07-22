@@ -5,15 +5,23 @@ MODE="${1:-run}"
 APP_NAME="AnyNotify"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DERIVED_DATA="$ROOT_DIR/.build/DerivedData"
-APP_BUNDLE="$DERIVED_DATA/Build/Products/Debug/$APP_NAME.app"
+CONFIGURATION="Debug"
+
+if [[ "$MODE" == "release" || "$MODE" == "--release" ]]; then
+  CONFIGURATION="Release"
+fi
+
+APP_BUNDLE="$DERIVED_DATA/Build/Products/$CONFIGURATION/$APP_NAME.app"
 APP_BINARY="$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 
-pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+if [[ "$CONFIGURATION" == "Debug" ]]; then
+  pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+fi
 
 xcodebuild \
   -project "$ROOT_DIR/AnyNotify.xcodeproj" \
   -scheme "$APP_NAME" \
-  -configuration Debug \
+  -configuration "$CONFIGURATION" \
   -derivedDataPath "$DERIVED_DATA" \
   build
 
@@ -22,6 +30,9 @@ open_app() {
 }
 
 case "$MODE" in
+  --release|release)
+    printf 'Release build succeeded: %s\n' "$APP_BUNDLE"
+    ;;
   run)
     open_app
     ;;
@@ -42,7 +53,7 @@ case "$MODE" in
     pgrep -x "$APP_NAME" >/dev/null
     ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify]" >&2
+    echo "usage: $0 [run|release|--debug|--logs|--telemetry|--verify]" >&2
     exit 2
     ;;
 esac

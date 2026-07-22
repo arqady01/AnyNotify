@@ -31,8 +31,6 @@ struct CompletionReminderView: View {
                 Text("\(reminder.source.displayName) 任务已完成")
                     .font(.headline)
                 Spacer()
-                Image(systemName: "line.3.horizontal")
-                    .foregroundStyle(.tertiary)
             }
             .contentShape(Rectangle())
             .gesture(WindowDragGesture())
@@ -109,12 +107,4 @@ private struct CountdownDisplay: View {
             isPulsing = false
         }
     }
-}
-
-#Preview {
-    let store = MonitorStore()
-    store.previewCompletionReminder(source: .codex)
-    return CompletionReminderView()
-        .environmentObject(store)
-        .padding(30)
 }
