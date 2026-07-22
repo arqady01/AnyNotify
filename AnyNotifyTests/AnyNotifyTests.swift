@@ -112,6 +112,9 @@ struct AnyNotifyTests {
         #expect(reminder.isOverdue(at: start.addingTimeInterval(179)) == false)
         #expect(reminder.isOverdue(at: start.addingTimeInterval(180)) == true)
         #expect(reminder.remainingSeconds(at: start.addingTimeInterval(181)) == 0)
+        #expect(reminder.overdueSeconds(at: start.addingTimeInterval(179)) == 0)
+        #expect(reminder.overdueSeconds(at: start.addingTimeInterval(180)) == 0)
+        #expect(reminder.overdueSeconds(at: start.addingTimeInterval(181)) == 1)
     }
 
     @Test func completionReminderSupportsCustomDuration() {
@@ -382,6 +385,22 @@ struct AnyNotifyTests {
         _ = await engine.poll(at: start.addingTimeInterval(10))
         counts = await engine.cachedStateCounts()
         #expect(counts.cursors == 2)
+    }
+
+    @Test func applicationDataStorePersistsDedupeAndClearsOnlyLocalRecords() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "AnyNotifyStore.\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let timestamp = Date(timeIntervalSince1970: 10_000)
+        let event = TaskEvent(source: .codex, status: .completed, sessionID: "s1", turnID: "t1", summary: "完成", timestamp: timestamp)
+        let store = ApplicationDataStore(rootDirectory: root)
+        #expect(await store.prepare(event, now: timestamp) != nil)
+        await store.record(event, notificationResult: "sent", now: timestamp)
+
+        let restored = ApplicationDataStore(rootDirectory: root)
+        #expect(await restored.prepare(event, now: timestamp.addingTimeInterval(1)) == nil)
+        _ = await restored.clearLocalRecords()
+        #expect(!FileManager.default.fileExists(atPath: root.appending(path: "EventHistory.jsonl").path))
+        #expect(FileManager.default.fileExists(atPath: root.path))
     }
 
     private func envelope(type: String, payload: [String: Any]) throws -> Data {

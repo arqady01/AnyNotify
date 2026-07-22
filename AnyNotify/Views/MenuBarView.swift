@@ -3,6 +3,7 @@ import SwiftUI
 
 struct MenuBarView: View {
     @EnvironmentObject private var store: MonitorStore
+    @State private var showingClearConfirmation = false
 
     var body: some View {
         Toggle("监控任务状态", isOn: Binding(
@@ -47,10 +48,24 @@ struct MenuBarView: View {
         Button("发送测试提醒") {
             store.sendTestNotification()
         }
+        Button("清空本地记录…") {
+            showingClearConfirmation = true
+        }
+        .confirmationDialog("清空 AnyNotify 本地记录？", isPresented: $showingClearConfirmation) {
+            Button("清空记录", role: .destructive) {
+                store.clearLocalRecords()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("只会清空 AnyNotify 保存的事件、任务状态和诊断信息，不会删除 Claude/Codex 原始日志或读取游标。")
+        }
 
         Divider()
         if let lastError = store.lastError {
             Text(lastError)
+        }
+        if let lastClearMessage = store.lastClearMessage {
+            Text(lastClearMessage)
         }
         Button("退出") {
             NSApplication.shared.terminate(nil)

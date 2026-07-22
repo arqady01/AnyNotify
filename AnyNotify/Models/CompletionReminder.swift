@@ -30,6 +30,10 @@ struct CompletionReminder: Equatable, Sendable {
         date >= deadline
     }
 
+    func overdueSeconds(at date: Date) -> Int {
+        max(0, Int(date.timeIntervalSince(deadline)))
+    }
+
     func updatingDuration(_ duration: TimeInterval) -> CompletionReminder {
         CompletionReminder(
             source: source,

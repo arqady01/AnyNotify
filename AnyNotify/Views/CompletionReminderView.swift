@@ -22,6 +22,7 @@ struct CompletionReminderView: View {
     private func reminderContent(_ reminder: CompletionReminder, at date: Date) -> some View {
         let overdue = reminder.isOverdue(at: date)
         let remainingSeconds = reminder.remainingSeconds(at: date)
+        let overdueSeconds = reminder.overdueSeconds(at: date)
         let urgent = !overdue && remainingSeconds <= 30
 
         return VStack(spacing: 10) {
@@ -36,7 +37,7 @@ struct CompletionReminderView: View {
             .gesture(WindowDragGesture())
 
             CountdownDisplay(
-                text: overdue ? "已超时" : formattedTime(remainingSeconds),
+                text: overdue ? "已超时 \(overdueSeconds) 秒" : formattedTime(remainingSeconds),
                 urgent: urgent,
                 overdue: overdue
             )
@@ -74,7 +75,9 @@ private struct CountdownDisplay: View {
         Text(text)
             .font(.system(size: 36, weight: .bold, design: .rounded))
             .monospacedDigit()
-            .contentTransition(.numericText(countsDown: true))
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .contentTransition(.numericText(countsDown: !overdue))
             .foregroundStyle(overdue || urgent ? .red : .primary)
             .scaleEffect(urgent ? (isPulsing ? 1.12 : 0.96) : 1)
             .shadow(

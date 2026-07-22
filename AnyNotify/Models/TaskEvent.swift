@@ -47,7 +47,7 @@ enum TaskStatus: String, Codable, CaseIterable, Sendable {
     }
 }
 
-struct TaskEvent: Identifiable, Sendable {
+struct TaskEvent: Identifiable, Codable, Sendable {
     let id: UUID
     let source: TaskSource
     let status: TaskStatus
@@ -100,6 +100,19 @@ struct TaskEvent: Identifiable, Sendable {
     nonisolated var dedupeKey: String {
         let stableTurn = turnID ?? sessionID ?? projectName
         return "\(source.rawValue)|\(status.rawValue)|\(stableTurn)|\(summary.normalizedForDedupe)"
+    }
+
+    nonisolated func associated(sessionID: String?, turnID: String?) -> TaskEvent {
+        TaskEvent(
+            id: id,
+            source: source,
+            status: status,
+            sessionID: self.sessionID ?? sessionID,
+            turnID: self.turnID ?? turnID,
+            workingDirectory: workingDirectory,
+            summary: summary,
+            timestamp: timestamp
+        )
     }
 }
 

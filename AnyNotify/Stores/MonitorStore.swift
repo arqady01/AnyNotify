@@ -34,8 +34,10 @@ final class MonitorStore: ObservableObject {
         }
     }
     @Published var lastError: String?
+    @Published private(set) var lastClearMessage: String?
 
     private let engine = LogMonitoringEngine()
+    private let dataStore: ApplicationDataStore
     private let notifications: any NotificationSending
     private let reminderSounds = ReminderSoundService.shared
     private let hookManager: ClaudeHookManager
@@ -51,11 +53,13 @@ final class MonitorStore: ObservableObject {
     init(
         preferences: UserDefaults = .standard,
         notifications: any NotificationSending = DesktopNotificationService.shared,
-        hookManager: ClaudeHookManager = ClaudeHookManager()
+        hookManager: ClaudeHookManager = ClaudeHookManager(),
+        dataStore: ApplicationDataStore = ApplicationDataStore()
     ) {
         self.preferences = preferences
         self.notifications = notifications
         self.hookManager = hookManager
+        self.dataStore = dataStore
         isMonitoring = preferences.object(forKey: Self.monitoringEnabledKey) as? Bool ?? true
         showNotificationDetails = preferences.object(forKey: Self.showNotificationDetailsKey) as? Bool ?? false
         claudeHooksInstalled = hookManager.isInstalled()
@@ -123,6 +127,14 @@ final class MonitorStore: ObservableObject {
                 summary: "AnyNotify 桌面通知测试成功"
             )
             await accept(event)
+        }
+    }
+
+    func clearLocalRecords() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let result = await dataStore.clearLocalRecords()
+            lastClearMessage = result.removedFiles > 0 ? "已清空 AnyNotify 本地记录" : "暂无可清空的本地记录"
         }
     }
 
@@ -195,6 +207,7 @@ final class MonitorStore: ObservableObject {
     }
 
     private func accept(_ event: TaskEvent) async {
+        guard let event = await dataStore.prepare(event) else { return }
         // A new task means the user is actively working again, so the previous
         // completion reminder is no longer useful. Do this before deduplication
         // so even a repeated start event can close a visible reminder.
@@ -228,8 +241,10 @@ final class MonitorStore: ObservableObject {
         }
         do {
             try await notifications.send(event, includeDetails: showNotificationDetails)
+            await dataStore.record(event, notificationResult: "sent")
             lastError = nil
         } catch {
+            await dataStore.record(event, notificationResult: "failed: \(error.localizedDescription)")
             lastError = "发送通知失败：\(error.localizedDescription)"
         }
     }

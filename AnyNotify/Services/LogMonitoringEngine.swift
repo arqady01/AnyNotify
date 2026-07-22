@@ -17,6 +17,13 @@ actor LogMonitoringEngine {
     private struct FileCursor: Sendable {
         var offset: UInt64
         var remainder = Data()
+        var fileIdentity: UInt64? = nil
+    }
+
+    private struct PersistedCursor: Codable {
+        var offset: UInt64
+        var remainder: Data
+        var fileIdentity: UInt64?
     }
 
     struct CachedStateCounts: Sendable {
@@ -29,6 +36,7 @@ actor LogMonitoringEngine {
     private let homeDirectory: URL
     private let maximumTrackedFiles: Int
     private let discoveryInterval: TimeInterval
+    private let cursorURL: URL
     private var cursors: [URL: FileCursor] = [:]
     private var claudeParsers: [URL: ClaudeLogParser] = [:]
     private var codexParsers: [URL: CodexLogParser] = [:]
@@ -49,6 +57,17 @@ actor LogMonitoringEngine {
         self.homeDirectory = homeDirectory
         self.maximumTrackedFiles = maximumTrackedFiles
         self.discoveryInterval = discoveryInterval
+        let actualHome = FileManager.default.homeDirectoryForCurrentUser
+        let support = homeDirectory == actualHome
+            ? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!.appending(path: "AnyNotify", directoryHint: .isDirectory)
+            : homeDirectory.appending(path: ".anynotify-test", directoryHint: .isDirectory)
+        self.cursorURL = support.appending(path: "LogReadCursors.json")
+        if let data = try? Data(contentsOf: cursorURL),
+           let saved = try? JSONDecoder().decode([String: PersistedCursor].self, from: data) {
+            self.cursors = saved.reduce(into: [:]) { result, item in
+                result[URL(fileURLWithPath: item.key)] = FileCursor(offset: item.value.offset, remainder: item.value.remainder, fileIdentity: item.value.fileIdentity)
+            }
+        }
     }
 
     func poll() -> PollResult {
@@ -96,6 +115,7 @@ actor LogMonitoringEngine {
         }
 
         trimCachedFileState()
+        persistCursors()
         initialized = true
         return PollResult(
             events: events,
@@ -158,15 +178,16 @@ actor LogMonitoringEngine {
         guard let attributes = try? fileManager.attributesOfItem(atPath: url.path),
               let sizeNumber = attributes[.size] as? NSNumber else { return [] }
         let size = sizeNumber.uint64Value
+        let identity = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value
 
         if cursors[url] == nil {
-            cursors[url] = FileCursor(offset: seedAtEnd ? size : 0)
+            cursors[url] = FileCursor(offset: seedAtEnd ? size : 0, fileIdentity: identity)
             if seedAtEnd { return [] }
         }
 
         var cursor = cursors[url] ?? FileCursor(offset: 0)
-        if size < cursor.offset {
-            cursor = FileCursor(offset: 0)
+        if cursor.fileIdentity != identity || size < cursor.offset {
+            cursor = FileCursor(offset: 0, fileIdentity: identity)
         }
         guard size > cursor.offset else {
             cursors[url] = cursor
@@ -188,6 +209,17 @@ actor LogMonitoringEngine {
         cursor.remainder = lines.popLast() ?? Data()
         cursors[url] = cursor
         return lines.filter { !$0.isEmpty }
+    }
+
+    private func persistCursors() {
+        let values = cursors.reduce(into: [String: PersistedCursor]()) { result, item in
+            result[item.key.path] = PersistedCursor(offset: item.value.offset, remainder: item.value.remainder, fileIdentity: item.value.fileIdentity)
+        }
+        let directory = cursorURL.deletingLastPathComponent()
+        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        if let data = try? JSONEncoder().encode(values) {
+            try? data.write(to: cursorURL, options: .atomic)
+        }
     }
 
     private func parseCodexErrorLog(_ data: Data) -> TaskEvent? {
