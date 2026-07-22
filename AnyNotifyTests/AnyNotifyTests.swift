@@ -168,6 +168,32 @@ struct AnyNotifyTests {
         #expect(store.completionReminder == nil)
     }
 
+    @Test func logMonitoringCacheIsBounded() async throws {
+        let fileManager = FileManager.default
+        let temporaryHome = fileManager.temporaryDirectory
+            .appending(path: "AnyNotifyTests.\(UUID().uuidString)", directoryHint: .isDirectory)
+        let claudeRoot = temporaryHome
+            .appending(path: ".claude/projects", directoryHint: .isDirectory)
+        defer { try? fileManager.removeItem(at: temporaryHome) }
+
+        try fileManager.createDirectory(at: claudeRoot, withIntermediateDirectories: true)
+        for index in 0..<8 {
+            let file = claudeRoot.appending(path: "session-\(index).jsonl")
+            try Data("{\"type\":\"noop\"}\n".utf8).write(to: file)
+        }
+
+        let engine = LogMonitoringEngine(
+            homeDirectory: temporaryHome,
+            maximumTrackedFiles: 4
+        )
+        _ = await engine.poll()
+        let counts = await engine.cachedStateCounts()
+
+        #expect(counts.cursors == 4)
+        #expect(counts.claudeParsers == 4)
+        #expect(counts.codexParsers == 0)
+    }
+
     private func envelope(type: String, payload: [String: Any]) throws -> Data {
         try jsonData([
             "type": type,

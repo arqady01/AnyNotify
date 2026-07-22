@@ -56,23 +56,18 @@ final class MonitorStore: ObservableObject {
     }
 
     func start() {
-        guard monitorTask == nil else { return }
+        guard monitorTask == nil, isMonitoring else { return }
         claudeHooksInstalled = hookManager.isInstalled()
-        monitorTask = Task { [weak self] in
-            guard let self else { return }
-            notificationStatus = await notifications.requestAuthorization()
+        monitorTask = Task { @MainActor [weak self] in
+            await self?.refreshNotificationStatus()
             while !Task.isCancelled {
-                if isMonitoring {
-                    let result = await engine.poll()
-                    applyAvailability(
-                        claude: result.availability.claude,
-                        codex: result.availability.codex
-                    )
-                    for event in result.events {
-                        await accept(event)
-                    }
+                guard self != nil else { return }
+                await self?.pollOnce()
+                do {
+                    try await Task.sleep(for: .seconds(1))
+                } catch {
+                    return
                 }
-                try? await Task.sleep(for: .seconds(1))
             }
         }
     }
@@ -95,7 +90,11 @@ final class MonitorStore: ObservableObject {
 
     func setMonitoring(_ enabled: Bool) {
         isMonitoring = enabled
-        if enabled { start() }
+        if enabled {
+            start()
+        } else {
+            stop()
+        }
     }
 
     func sendTestNotification() {
@@ -151,6 +150,27 @@ final class MonitorStore: ObservableObject {
             ? "\(source.displayName) 正在等待你的确认或输入"
             : "\(source.displayName) 任务状态已更新"
         Task { await accept(TaskEvent(source: source, status: status, summary: summary)) }
+    }
+
+    private func refreshNotificationStatus() async {
+        let status = await notifications.requestAuthorization()
+        guard !Task.isCancelled else { return }
+        notificationStatus = status
+    }
+
+    private func pollOnce() async {
+        guard isMonitoring else { return }
+        let result = await engine.poll()
+        guard !Task.isCancelled, isMonitoring else { return }
+
+        applyAvailability(
+            claude: result.availability.claude,
+            codex: result.availability.codex
+        )
+        for event in result.events {
+            guard !Task.isCancelled else { return }
+            await accept(event)
+        }
     }
 
     private func accept(_ event: TaskEvent) async {

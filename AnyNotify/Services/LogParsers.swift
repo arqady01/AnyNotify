@@ -154,7 +154,7 @@ struct CodexLogParser: Sendable {
             return isSubagent ? [] : [event(status: .started, summary: "Codex 开始处理任务", timestamp: timestamp)]
 
         case "agent_message":
-            lastAssistantText = (string(payload["message"]) ?? lastAssistantText).trimmed
+            lastAssistantText = (string(payload["message"]) ?? lastAssistantText).shortenedForNotification
             if string(payload["phase"]) == "final_answer", !isSubagent, pendingInputCalls.isEmpty {
                 return [event(status: .completed, summary: lastAssistantText, timestamp: timestamp)]
             }
@@ -201,7 +201,7 @@ struct CodexLogParser: Sendable {
         case "message":
             guard string(payload["role"]) == "assistant" else { return [] }
             let text = extractMessageText(payload["content"])
-            if !text.isEmpty { lastAssistantText = text }
+            if !text.isEmpty { lastAssistantText = text.shortenedForNotification }
             if string(payload["phase"]) == "final_answer", !isSubagent, pendingInputCalls.isEmpty {
                 return [event(status: .completed, summary: lastAssistantText, timestamp: timestamp)]
             }

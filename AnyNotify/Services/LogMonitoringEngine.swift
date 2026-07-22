@@ -1,6 +1,8 @@
 import Foundation
 
 actor LogMonitoringEngine {
+    static let defaultMaximumTrackedFiles = 64
+
     struct Availability: Sendable {
         let claude: Bool
         let codex: Bool
@@ -16,12 +18,29 @@ actor LogMonitoringEngine {
         var remainder = Data()
     }
 
+    struct CachedStateCounts: Sendable {
+        let cursors: Int
+        let claudeParsers: Int
+        let codexParsers: Int
+    }
+
     private let fileManager = FileManager.default
-    private let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
+    private let homeDirectory: URL
+    private let maximumTrackedFiles: Int
     private var cursors: [URL: FileCursor] = [:]
     private var claudeParsers: [URL: ClaudeLogParser] = [:]
     private var codexParsers: [URL: CodexLogParser] = [:]
+    private var fileAccessOrder: [URL] = []
     private var initialized = false
+
+    init(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        maximumTrackedFiles: Int = LogMonitoringEngine.defaultMaximumTrackedFiles
+    ) {
+        precondition(maximumTrackedFiles > 0)
+        self.homeDirectory = homeDirectory
+        self.maximumTrackedFiles = maximumTrackedFiles
+    }
 
     func poll() -> PollResult {
         let claudeRoot = homeDirectory.appending(path: ".claude/projects", directoryHint: .isDirectory)
@@ -33,6 +52,7 @@ actor LogMonitoringEngine {
         var events: [TaskEvent] = []
 
         for file in claudeFiles {
+            markFileAccessed(file)
             let lines = readNewLines(from: file, seedAtEnd: !initialized)
             var parser = claudeParsers[file] ?? ClaudeLogParser()
             for line in lines { events.append(contentsOf: parser.parse(line: line)) }
@@ -40,6 +60,7 @@ actor LogMonitoringEngine {
         }
 
         for file in codexFiles {
+            markFileAccessed(file)
             let lines = readNewLines(from: file, seedAtEnd: !initialized)
             var parser = codexParsers[file] ?? CodexLogParser()
             for line in lines { events.append(contentsOf: parser.parse(line: line)) }
@@ -47,11 +68,13 @@ actor LogMonitoringEngine {
         }
 
         if fileManager.fileExists(atPath: tuiLog.path) {
+            markFileAccessed(tuiLog)
             for line in readNewLines(from: tuiLog, seedAtEnd: !initialized) {
                 if let event = parseCodexErrorLog(line) { events.append(event) }
             }
         }
 
+        trimCachedFileState()
         initialized = true
         return PollResult(
             events: events,
@@ -74,8 +97,38 @@ actor LogMonitoringEngine {
             guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]),
                   values.isRegularFile == true else { continue }
             files.append((url, values.contentModificationDate ?? .distantPast))
+            files.sort { $0.1 > $1.1 }
+            if files.count > limit {
+                files.removeLast(files.count - limit)
+            }
         }
-        return files.sorted { $0.1 > $1.1 }.prefix(limit).map(\.0)
+        return files.map(\.0)
+    }
+
+    func cachedStateCounts() -> CachedStateCounts {
+        CachedStateCounts(
+            cursors: cursors.count,
+            claudeParsers: claudeParsers.count,
+            codexParsers: codexParsers.count
+        )
+    }
+
+    private func markFileAccessed(_ url: URL) {
+        fileAccessOrder.removeAll { $0 == url }
+        fileAccessOrder.append(url)
+    }
+
+    private func trimCachedFileState() {
+        let excessCount = fileAccessOrder.count - maximumTrackedFiles
+        guard excessCount > 0 else { return }
+
+        let evictedFiles = fileAccessOrder.prefix(excessCount)
+        fileAccessOrder.removeFirst(excessCount)
+        for file in evictedFiles {
+            cursors.removeValue(forKey: file)
+            claudeParsers.removeValue(forKey: file)
+            codexParsers.removeValue(forKey: file)
+        }
     }
 
     private func readNewLines(from url: URL, seedAtEnd: Bool) -> [Data] {
