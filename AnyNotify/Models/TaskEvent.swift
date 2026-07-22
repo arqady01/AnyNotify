@@ -1,0 +1,124 @@
+import Foundation
+
+enum TaskSource: String, Codable, CaseIterable, Sendable {
+    case claude
+    case codex
+
+    var displayName: String {
+        switch self {
+        case .claude: "Claude Code"
+        case .codex: "Codex"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .claude: "c.circle.fill"
+        case .codex: "terminal.fill"
+        }
+    }
+}
+
+enum TaskStatus: String, Codable, CaseIterable, Sendable {
+    case started
+    case completed
+    case waiting
+    case interrupted
+    case failed
+
+    var displayName: String {
+        switch self {
+        case .started: "已开始"
+        case .completed: "已完成"
+        case .waiting: "等待输入"
+        case .interrupted: "已中断"
+        case .failed: "失败"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .started: "play.circle.fill"
+        case .completed: "checkmark.circle.fill"
+        case .waiting: "questionmark.circle.fill"
+        case .interrupted: "stop.circle.fill"
+        case .failed: "exclamationmark.triangle.fill"
+        }
+    }
+}
+
+struct TaskEvent: Identifiable, Sendable {
+    let id: UUID
+    let source: TaskSource
+    let status: TaskStatus
+    let sessionID: String?
+    let turnID: String?
+    let workingDirectory: String?
+    let summary: String
+    let timestamp: Date
+
+    init(
+        id: UUID = UUID(),
+        source: TaskSource,
+        status: TaskStatus,
+        sessionID: String? = nil,
+        turnID: String? = nil,
+        workingDirectory: String? = nil,
+        summary: String = "",
+        timestamp: Date = Date()
+    ) {
+        self.id = id
+        self.source = source
+        self.status = status
+        self.sessionID = sessionID
+        self.turnID = turnID
+        self.workingDirectory = workingDirectory
+        self.summary = summary
+        self.timestamp = timestamp
+    }
+
+    var projectName: String {
+        guard let workingDirectory, !workingDirectory.isEmpty else { return "" }
+        return URL(fileURLWithPath: workingDirectory).lastPathComponent
+    }
+
+    var notificationTitle: String {
+        "\(source.displayName) · \(status.displayName)"
+    }
+
+    var notificationBody: String {
+        let parts = [projectName, summary].filter { !$0.isEmpty }
+        return parts.isEmpty ? "任务状态已更新" : parts.joined(separator: " — ")
+    }
+
+    var dedupeKey: String {
+        let stableTurn = turnID ?? sessionID ?? projectName
+        return "\(source.rawValue)|\(status.rawValue)|\(stableTurn)|\(summary.normalizedForDedupe)"
+    }
+}
+
+extension String {
+    var trimmed: String {
+        trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var firstUsefulLine: String {
+        split(whereSeparator: { $0.isNewline })
+            .map { String($0).trimmed }
+            .first(where: { !$0.isEmpty }) ?? ""
+    }
+
+    var shortenedForNotification: String {
+        let line = firstUsefulLine
+        guard line.count > 160 else { return line }
+        return String(line.prefix(157)) + "…"
+    }
+
+    fileprivate var normalizedForDedupe: String {
+        lowercased()
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+            .prefix(200)
+            .description
+    }
+}
