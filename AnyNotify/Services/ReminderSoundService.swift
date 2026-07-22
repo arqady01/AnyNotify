@@ -14,11 +14,11 @@ final class ReminderSoundService {
     func playUrgentWarning() {
         urgentTask?.cancel()
         urgentTask = Task { @MainActor [weak self] in
-            for index in 0..<3 {
+            for index in 0..<8 {
                 guard !Task.isCancelled else { return }
                 NSSound.beep()
-                if index < 2 {
-                    try? await Task.sleep(for: .milliseconds(180))
+                if index < 7 {
+                    try? await Task.sleep(for: .seconds(2))
                 }
             }
             self?.urgentTask = nil
